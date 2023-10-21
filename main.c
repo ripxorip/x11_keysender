@@ -8,8 +8,8 @@
 // In the future, one shall be able to connect to this computer and register a callback
 // instead
 
-#define SERVER_URL_PRESS "http://ripxowork:5000/key_press"
-#define SERVER_URL_RELEASE "http://ripxowork:5000/key_release"
+#define SERVER_URL_PRESS "http://voiceboxclient:5000/key_press"
+#define SERVER_URL_RELEASE "http://voiceboxclient:5000/key_release"
 
 static size_t callback_http(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
