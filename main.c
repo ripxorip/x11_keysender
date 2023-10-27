@@ -3,53 +3,42 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <curl/curl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 // In the future, one shall be able to connect to this computer and register a callback
 // instead
 
-#define SERVER_URL_PRESS "http://voiceboxclient:5000/key_press"
-#define SERVER_URL_RELEASE "http://voiceboxclient:5000/key_release"
+// voiceboxclient (work)
+#define SERVER_IP "100.101.164.159"
+#define SERVER_PORT 5000
 
-static size_t callback_http(void *ptr, size_t size, size_t nmemb, void *userdata)
+void send_keyevent_udp(unsigned int keycode, int event_type)
 {
-    /* ignore response */
-    return size * nmemb;
-}
-
-void send_keypress_http(unsigned int keycode, const char *url)
-{
-    /* initialize libcurl */
-    curl_global_init(CURL_GLOBAL_ALL);
-    CURL *curl = curl_easy_init();
-    if (curl == NULL)
+    /* create UDP socket */
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0)
     {
-        fprintf(stderr, "Cannot create libcurl handle\n");
+        fprintf(stderr, "Cannot create UDP socket\n");
         exit(1);
     }
 
-    /* set HTTP headers */
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    /* set server address */
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = inet_addr(SERVER_IP);
+    servaddr.sin_port = htons(SERVER_PORT);
 
     /* send key event to server */
     char buf[100];
-    snprintf(buf, sizeof(buf), "key=%x", keycode);
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, buf);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback_http);
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK)
-    {
-        fprintf(stderr, "Cannot send HTTP request: %s\n", curl_easy_strerror(res));
-    }
+    snprintf(buf, sizeof(buf), "%x,%d", keycode, event_type);
+    sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&servaddr, sizeof(servaddr));
 
     /* cleanup */
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
+    close(sockfd);
 }
 
 void event_loop_x11()
@@ -88,16 +77,14 @@ void event_loop_x11()
         if (event.type == KeyPress)
         {
             printf("KeyPress: %x\n", event.xkey.keycode);
-
             /* send key press event to server */
-            send_keypress_http(event.xkey.keycode, SERVER_URL_PRESS);
+            send_keyevent_udp(event.xkey.keycode, 0);
         }
         else if (event.type == KeyRelease)
         {
             printf("KeyRelease: %x\n", event.xkey.keycode);
-
             /* send key release event to server */
-            send_keypress_http(event.xkey.keycode, SERVER_URL_RELEASE);
+            send_keyevent_udp(event.xkey.keycode, 1);
         }
     }
 
