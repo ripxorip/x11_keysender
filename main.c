@@ -1,5 +1,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
+#include <X11/extensions/XTest.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,78 +12,83 @@
 
 #define CONFIG_FILE "client.txt"
 
-// Here is an example of the config file
-// server_ip=100.101.164.159
-// server_port=5000
+char dictation_ip[INET_ADDRSTRLEN] = "";
 
-// The reason for having a configuration file is to allow
-// multiple clients to use the same server.
-// Each client will be able to write to the client.txt file
-// in order to get its keystrokes.
-
-void read_config(char *server_ip, int *server_port)
-{
-    /* open config file */
-    FILE *fp = fopen(CONFIG_FILE, "r");
-    if (fp == NULL)
-    {
-        fprintf(stderr, "Cannot open config file\n");
-        return;
-    }
-
-    /* read server IP and port from file */
-    char line[100];
-    while (fgets(line, sizeof(line), fp) != NULL)
-    {
-        if (sscanf(line, "server_ip=%s", server_ip) == 1)
-        {
-            continue;
-        }
-        if (sscanf(line, "server_port=%d", server_port) == 1)
-        {
-            continue;
-        }
-    }
-
-    /* close config file */
-    fclose(fp);
+void press_key(KeySym keysym) {
+    // Fake a F10 key press for X11
+    Display *display = XOpenDisplay(NULL);
+    XTestFakeKeyEvent(display, XKeysymToKeycode(display, keysym), True, 0);
+    XTestFakeKeyEvent(display, XKeysymToKeycode(display, keysym), False, 0);
+    XCloseDisplay(display);
 }
 
-int validate_config(char *server_ip, int server_port)
-{
-    /* validate server IP */
-    struct in_addr addr;
-    if (inet_pton(AF_INET, server_ip, &addr) != 1)
-    {
-        fprintf(stderr, "Invalid server IP: %s\n", server_ip);
-        return 0;
+void press_stop_key() {
+    press_key(XK_F10);
+}
+
+void press_dictation_key() {
+    press_key(XK_F11);
+}
+
+void press_command_key() {
+    press_key(XK_F12);
+}
+
+void *listen_udp(void *arg) {
+    (void)arg;
+    int sockfd;
+    struct sockaddr_in servaddr, cliaddr;
+
+    // Create socket file descriptor
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
     }
 
-    /* validate server port */
-    if (server_port < 1 || server_port > 65535)
-    {
-        fprintf(stderr, "Invalid server port: %d\n", server_port);
-        return 0;
+    memset(&servaddr, 0, sizeof(servaddr));
+    memset(&cliaddr, 0, sizeof(cliaddr));
+
+    // Filling server information
+    servaddr.sin_family = AF_INET; // IPv4
+    servaddr.sin_addr.s_addr = INADDR_ANY;
+    servaddr.sin_port = htons(5000);
+
+    // Bind the socket with the server address
+    if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
     }
 
-    return 1;
+    while (1) {
+        uint32_t len, n;
+        char buffer[1024];
+        len = sizeof(cliaddr); //len is value/resuslt
+
+        n = recvfrom(sockfd, (char *)buffer, 1024, MSG_WAITALL, (struct sockaddr *)&cliaddr, &len);
+        buffer[n] = '\0';
+
+        // Check if the message is "start_dictation@ip_addr"
+        if (strncmp(buffer, "start_dictation@", 16) == 0) {
+            // Copy the IP address to the global variable
+            strncpy(dictation_ip, buffer + 16, INET_ADDRSTRLEN);
+            press_dictation_key();
+        }
+        else if (strncmp(buffer, "start_command@", 14) == 0) {
+            // Copy the IP address to the global variable
+            strncpy(dictation_ip, buffer + 14, INET_ADDRSTRLEN);
+            press_command_key();
+        }
+        else if (strncmp(buffer, "stop", 4) == 0) {
+            dictation_ip[0] = '\0';
+            press_stop_key();
+        }
+    }
+    return NULL;
 }
 
 void send_keyevent_udp(unsigned int keycode, int event_type)
 {
-    /* read config file */
-    char server_ip[100] = "";
-    int server_port = 0;
-    read_config(server_ip, &server_port);
-
-    /* if config file not found, do not send key event */
-    if (server_ip[0] == '\0' || server_port == 0)
-    {
-        return;
-    }
-
-    /* validate server IP and port */
-    if (!validate_config(server_ip, server_port))
+    if (strlen(dictation_ip) == 0)
     {
         return;
     }
@@ -98,13 +105,13 @@ void send_keyevent_udp(unsigned int keycode, int event_type)
     struct sockaddr_in servaddr;
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = inet_addr(server_ip);
-    servaddr.sin_port = htons(server_port);
+    servaddr.sin_addr.s_addr = inet_addr(dictation_ip);
+    servaddr.sin_port = htons(5000);
 
     /* send key event to server */
     char buf[100];
     snprintf(buf, sizeof(buf), "%x,%d", keycode, event_type);
-    sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&servaddr, sizeof(servaddr));
+    sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&dictation_ip, sizeof(servaddr));
 
     /* cleanup */
     close(sockfd);
@@ -163,6 +170,13 @@ void event_loop_x11()
 
 int main()
 {
+    pthread_t thread_id;
+    // Create a new thread
+    if (pthread_create(&thread_id, NULL, listen_udp, NULL) != 0) {
+        fprintf(stderr, "Error creating thread\n");
+        return 1;
+    }
+
     /* start event loop */
     event_loop_x11();
 
