@@ -111,7 +111,7 @@ void send_keyevent_udp(unsigned int keycode, int event_type)
     /* send key event to server */
     char buf[100];
     snprintf(buf, sizeof(buf), "%x,%d", keycode, event_type);
-    sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&dictation_ip, sizeof(servaddr));
+    sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&servaddr, sizeof(servaddr));
 
     /* cleanup */
     close(sockfd);
